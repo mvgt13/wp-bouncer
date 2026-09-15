@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Bouncer
-Version: 2.5.4
+Version: 2.5.6
 Plugin URI: https://voget.co
 Update URI: false
 Author: VOGET.CO
@@ -28,15 +28,15 @@ if (!class_exists('BOUNCER')) {
 
     class BOUNCER
     {
-        private string $plugin_version;
+        const VERSION = '2.5.6';
+
+        private string $plugin_version = self::VERSION;
         private string $plugin_url  = '';
         private string $plugin_path = '';
 
         function __construct()
         {
-            $data = get_file_data(__FILE__, ['Version' => 'Version']);
-            $this->plugin_version = $data['Version'];
-            define('BOUNCER_VERSION', $this->plugin_version);
+            define('BOUNCER_VERSION', '2.5.6');
             define('BOUNCER_SITE_URL', site_url());
             define('BOUNCER_URL', $this->plugin_url());
             define('BOUNCER_PATH', $this->plugin_path());
@@ -192,6 +192,21 @@ if (!class_exists('BOUNCER')) {
         function bouncer_template_redirect()
         {
             if (!get_option('bouncer_enabled', false)) return;
+
+            // Gate is on. This handler runs on template_redirect and would
+            // otherwise swallow WordPress's do_robots(), leaving a gated site
+            // with no valid robots.txt — and in coming_soon mode the placeholder
+            // answers /robots.txt with an indexable HTML page. Serve a real
+            // disallow-all robots.txt before any bypass check: a crawler is never
+            // bypassed, and a gated (staging) site must never advertise "crawl me".
+            if (is_robots()) {
+                header('Content-Type: text/plain; charset=utf-8');
+                header('X-Robots-Tag: noindex, nofollow', true);
+                status_header(200);
+                echo "User-agent: *\nDisallow: /\n";
+                exit;
+            }
+
             if (is_user_logged_in()) return;
             if ($this->is_login_page()) return;
             if ($this->is_bypass_allowed()) return;
@@ -210,6 +225,12 @@ if (!class_exists('BOUNCER')) {
                 status_header(503);
                 header('Retry-After: ' . get_option('bouncer_retry_after', 3600));
             }
+
+            // The gated page is never something we want indexed, in either mode
+            // (coming_soon returns 200, so the placeholder is otherwise fair game
+            // for crawlers). Belt-and-braces alongside the <meta robots> tag in
+            // the template.
+            header('X-Robots-Tag: noindex, nofollow', true);
 
             include_once('bouncer-template.php');
             exit();
@@ -272,7 +293,10 @@ if (!class_exists('BOUNCER')) {
                             <th><label for="bouncer_enabled"><?php _e('Enable Bouncer', 'bouncer'); ?></label></th>
                             <td>
                                 <input type="checkbox" name="bouncer_enabled" id="bouncer_enabled" value="1" <?php checked(1, get_option('bouncer_enabled')); ?> />
-                                <p class="description"><?php _e('Redirect non-logged-in visitors to the bouncer page.', 'bouncer'); ?></p>
+                                <p class="description">
+                                    <?php _e('When on, every front-end request from a visitor who is not logged in and not on the bypass list is served the Bouncer page instead of the real site.', 'bouncer'); ?><br>
+                                    <?php _e('Still get through while it is on: logged-in users, IPs on the Allowed IPs list, and anyone holding a valid preview link. While it is on, Bouncer also serves a strict <code>robots.txt</code> (<code>Disallow: /</code>) and sends <code>noindex</code> on every response so the gated site cannot be indexed.', 'bouncer'); ?>
+                                </p>
                             </td>
                         </tr>
                         <tr>
@@ -283,8 +307,9 @@ if (!class_exists('BOUNCER')) {
                                     <option value="coming_soon" <?php selected(get_option('bouncer_mode', 'maintenance'), 'coming_soon'); ?>><?php _e('Coming Soon (200)', 'bouncer'); ?></option>
                                 </select>
                                 <p class="description">
-                                    <strong><?php _e('503 Maintenance:', 'bouncer'); ?></strong> <?php _e('Temporary downtime. Search engines retry after the Retry-After interval.', 'bouncer'); ?><br>
-                                    <strong><?php _e('200 Coming Soon:', 'bouncer'); ?></strong> <?php _e('New site under construction. Search engines index normally.', 'bouncer'); ?>
+                                    <strong><?php _e('503 Maintenance:', 'bouncer'); ?></strong> <?php _e('For an existing, already-indexed site that is temporarily down. Returns HTTP 503 with a Retry-After header so search engines keep the existing pages and check back later. Use this for updates, migrations, and short outages.', 'bouncer'); ?><br>
+                                    <strong><?php _e('200 Coming Soon:', 'bouncer'); ?></strong> <?php _e('For a brand-new site that is not live yet. Returns HTTP 200 so the placeholder loads as a normal page. Use this before launch.', 'bouncer'); ?><br>
+                                    <?php _e('Either way, while Bouncer is on the gated site is kept out of search results (strict robots.txt + noindex headers). The status code only changes how engines treat pages they already know about.', 'bouncer'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -297,7 +322,7 @@ if (!class_exists('BOUNCER')) {
                                 <button type="button" class="button-link bouncer-retry-preset" data-val="3600"><?php _e('1 hour', 'bouncer'); ?></button> &middot;
                                 <button type="button" class="button-link bouncer-retry-preset" data-val="21600"><?php _e('6 hours', 'bouncer'); ?></button> &middot;
                                 <button type="button" class="button-link bouncer-retry-preset" data-val="86400"><?php _e('24 hours', 'bouncer'); ?></button>
-                                <p class="description"><?php _e('Maintenance mode only — tells search engines how long to wait before checking back.', 'bouncer'); ?></p>
+                                <p class="description"><?php _e('Maintenance mode only. Sets the <code>Retry-After</code> header on the 503 response — a hint to search engines and monitoring tools for how long to wait before checking back. Set it to roughly how long you expect the work to take (minimum 60 seconds). Ignored in Coming Soon mode.', 'bouncer'); ?></p>
                             </td>
                         </tr>
                     </table>
@@ -400,7 +425,10 @@ if (!class_exists('BOUNCER')) {
                             <th><label for="bouncer_allowed_ips"><?php _e('Allowed IPs', 'bouncer'); ?></label></th>
                             <td>
                                 <textarea name="bouncer_allowed_ips" id="bouncer_allowed_ips" rows="5" class="large-text" placeholder="192.168.1.1&#10;10.0.0.1"><?php echo esc_textarea(get_option('bouncer_allowed_ips', '')); ?></textarea>
-                                <p class="description"><?php _e('One IP address per line. Visitors from these IPs always see the live site, regardless of whether Bouncer is on.', 'bouncer'); ?></p>
+                                <p class="description">
+                                    <?php _e('One IPv4 or IPv6 address per line — exact matches only, no ranges or CIDR. Requests coming from these addresses skip the gate and see the live site.', 'bouncer'); ?><br>
+                                    <?php _e('Matched against the connecting IP (<code>REMOTE_ADDR</code>). Behind a reverse proxy or CDN that is the proxy\'s address, not the visitor\'s, so prefer preview links there. Your own current IP is shown by "What is my IP" services; a dynamic home connection can change without notice.', 'bouncer'); ?>
+                                </p>
                             </td>
                         </tr>
                     </table>
@@ -409,7 +437,10 @@ if (!class_exists('BOUNCER')) {
                     <table class="form-table">
                         <tr>
                             <th><label for="bouncer_heading"><?php _e('Heading', 'bouncer'); ?></label></th>
-                            <td><input type="text" name="bouncer_heading" id="bouncer_heading" value="<?php echo esc_attr(get_option('bouncer_heading', 'COMING SOON')); ?>" class="regular-text" /></td>
+                            <td>
+                                <input type="text" name="bouncer_heading" id="bouncer_heading" value="<?php echo esc_attr(get_option('bouncer_heading', 'COMING SOON')); ?>" class="regular-text" />
+                                <p class="description"><?php _e('Large headline at the top of the page, and the browser tab title (shown as "Site Name — Heading"). Plain text, keep it short — e.g. "Coming soon" or "Back shortly".', 'bouncer'); ?></p>
+                            </td>
                         </tr>
                         <tr>
                             <th><label for="bouncer_bilingual"><?php _e('Secondary Text', 'bouncer'); ?></label></th>
@@ -421,7 +452,10 @@ if (!class_exists('BOUNCER')) {
                         </tr>
                         <tr>
                             <th><label for="bouncer_text_en"><?php _e('Main Text', 'bouncer'); ?></label></th>
-                            <td><textarea name="bouncer_text_en" id="bouncer_text_en" rows="4" class="large-text"><?php echo esc_textarea(get_option('bouncer_text_en', 'This site is still in the works and will be live soon.')); ?></textarea></td>
+                            <td>
+                                <textarea name="bouncer_text_en" id="bouncer_text_en" rows="4" class="large-text"><?php echo esc_textarea(get_option('bouncer_text_en', 'This site is still in the works and will be live soon.')); ?></textarea>
+                                <p class="description"><?php _e('Body copy under the heading, shown to every visitor. Basic HTML is allowed (links, <code>&lt;strong&gt;</code>, <code>&lt;em&gt;</code>). If a Contact Email is set, an obfuscated "get in touch" link is appended to this paragraph automatically.', 'bouncer'); ?></p>
+                            </td>
                         </tr>
                         <tr id="bouncer-secondary-text-row">
                             <th><label for="bouncer_text_de"><?php _e('Secondary Text', 'bouncer'); ?></label></th>
@@ -434,7 +468,7 @@ if (!class_exists('BOUNCER')) {
                             <th><label for="bouncer_email"><?php _e('Contact Email', 'bouncer'); ?></label></th>
                             <td>
                                 <input type="email" name="bouncer_email" id="bouncer_email" value="<?php echo esc_attr(get_option('bouncer_email', '')); ?>" class="regular-text" />
-                                <p class="description"><?php _e('Leave blank to omit the contact link.', 'bouncer'); ?></p>
+                                <p class="description"><?php _e('Adds a contact link to the Main Text (and to the Secondary Text when enabled). The address is never written into the page source as plain text or a <code>mailto:</code> — it is encoded and rebuilt in the browser so harvesters cannot scrape it; visitors without JavaScript see a readable "user [at] host" hint. Leave blank to omit the link entirely.', 'bouncer'); ?></p>
                             </td>
                         </tr>
                     </table>
@@ -446,6 +480,7 @@ if (!class_exists('BOUNCER')) {
                             <td>
                                 <input type="checkbox" name="bouncer_show_dark_mode" id="bouncer_show_dark_mode" value="1" <?php checked(1, get_option('bouncer_show_dark_mode')); ?> />
                                 <label for="bouncer_show_dark_mode"><?php _e('Show dark/light mode toggle button', 'bouncer'); ?></label>
+                                <p class="description"><?php _e('The page already follows the visitor\'s system light/dark preference. Enable this to also show a manual toggle button, remembered per browser.', 'bouncer'); ?></p>
                             </td>
                         </tr>
                         <tr>
@@ -453,12 +488,14 @@ if (!class_exists('BOUNCER')) {
                             <td>
                                 <input type="checkbox" name="bouncer_show_website_btn" id="bouncer_show_website_btn" value="1" <?php checked(1, get_option('bouncer_show_website_btn')); ?> />
                                 <label for="bouncer_show_website_btn"><?php _e('Show website link button', 'bouncer'); ?></label>
+                                <p class="description"><?php _e('Adds a button linking somewhere off-site while the gate is up — a holding page, a company site, or a social profile. Set the target in Website URL below.', 'bouncer'); ?></p>
                             </td>
                         </tr>
                         <tr id="bouncer-website-url-row">
                             <th><label for="bouncer_website_url"><?php _e('Website URL', 'bouncer'); ?></label></th>
                             <td>
                                 <input type="url" name="bouncer_website_url" id="bouncer_website_url" value="<?php echo esc_attr(get_option('bouncer_website_url', '')); ?>" class="regular-text" placeholder="https://" />
+                                <p class="description"><?php _e('Full URL including <code>https://</code>. The button shows the domain as its label. Only used when Website Button is enabled.', 'bouncer'); ?></p>
                             </td>
                         </tr>
                     </table>

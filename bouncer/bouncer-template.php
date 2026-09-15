@@ -15,6 +15,29 @@ $show_website_btn = (bool) get_option('bouncer_show_website_btn', false);
 $website_url      = get_option('bouncer_website_url', '');
 $website_domain   = $website_url ? parse_url($website_url, PHP_URL_HOST) : '';
 
+// Contact email is never emitted verbatim. Spam harvesters scrape `mailto:`
+// links and bare `user@host` strings straight out of the HTML source, so the
+// address is reversed + base64'd into a data attribute and rehydrated into a
+// real `mailto:` by the inline script at the end of <body>. No-JS visitors get
+// a readable "user [at] host" hint via <noscript>.
+$email_payload = $email ? base64_encode(strrev($email)) : '';
+list($email_user, $email_host) = $email
+    ? array_pad(explode('@', $email, 2), 2, '')
+    : ['', ''];
+
+$render_email_link = static function (string $label) use ($email_payload, $email_user, $email_host) {
+    if ($email_payload === '') {
+        return '';
+    }
+    return sprintf(
+        '<a href="#" class="link js-bouncer-email" data-e="%s" rel="nofollow noopener">%s</a><noscript> (%s [at] %s)</noscript>',
+        esc_attr($email_payload),
+        esc_html($label),
+        esc_html($email_user),
+        esc_html($email_host)
+    );
+};
+
 $retry_hours   = floor($retry_after / 3600);
 $retry_minutes = floor(($retry_after % 3600) / 60);
 $retry_display = $retry_hours > 0
@@ -26,6 +49,7 @@ $retry_display = $retry_hours > 0
 <head>
     <meta charset="<?php echo esc_attr($charset); ?>">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <title><?php echo esc_html($name); ?> — <?php echo esc_html($heading); ?></title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -174,17 +198,17 @@ $retry_display = $retry_hours > 0
             <?php if ($bilingual): ?>
                 <p>
                     <?php echo wp_kses_post($text_en); ?>
-                    <?php if ($email): ?> <?php _e('If you want to know more, feel free to', 'bouncer'); ?> <a href="mailto:<?php echo esc_attr($email); ?>" class="link"><?php _e('reach out', 'bouncer'); ?></a>.<?php endif; ?>
+                    <?php if ($email): ?> <?php _e('If you want to know more, feel free to', 'bouncer'); ?> <?php echo $render_email_link(__('reach out', 'bouncer')); ?>.<?php endif; ?>
                 </p>
                 <br><br>
                 <p>
                     <?php echo wp_kses_post($text_de); ?>
-                    <?php if ($email): ?> <?php _e('If you want to know more, feel free to', 'bouncer'); ?> <a href="mailto:<?php echo esc_attr($email); ?>" class="link"><?php _e('reach out', 'bouncer'); ?></a>.<?php endif; ?>
+                    <?php if ($email): ?> <?php _e('If you want to know more, feel free to', 'bouncer'); ?> <?php echo $render_email_link(__('reach out', 'bouncer')); ?>.<?php endif; ?>
                 </p>
             <?php else: ?>
                 <p>
                     <?php echo wp_kses_post($text_en); ?>
-                    <?php if ($email): ?> <a href="mailto:<?php echo esc_attr($email); ?>" class="link"><?php _e('Get in touch', 'bouncer'); ?></a>.<?php endif; ?>
+                    <?php if ($email): ?> <?php echo $render_email_link(__('Get in touch', 'bouncer')); ?>.<?php endif; ?>
                 </p>
             <?php endif; ?>
         </div>
@@ -229,6 +253,30 @@ $retry_display = $retry_hours > 0
             }
             // No class needed if null — CSS media query handles it
             document.getElementById('mode-text').textContent = isDark() ? 'Light Mode' : 'Dark Mode';
+        })();
+    </script>
+    <?php endif; ?>
+
+    <?php if ($email): ?>
+    <script>
+        // Rehydrate the obfuscated contact address into a working mailto: link.
+        (function () {
+            var links = document.querySelectorAll('.js-bouncer-email');
+            for (var i = 0; i < links.length; i++) {
+                (function (el) {
+                    var raw = el.getAttribute('data-e');
+                    if (!raw) return;
+                    var addr;
+                    try {
+                        addr = atob(raw).split('').reverse().join('');
+                    } catch (e) {
+                        return;
+                    }
+                    if (addr.indexOf('@') === -1) return;
+                    el.setAttribute('href', 'mailto:' + addr);
+                    el.removeAttribute('data-e');
+                })(links[i]);
+            }
         })();
     </script>
     <?php endif; ?>

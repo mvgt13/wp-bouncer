@@ -5,8 +5,9 @@ A WordPress plugin for maintenance mode and coming soon pages, with IP/token byp
 ## Features
 
 - **Two modes** selectable from the admin panel:
-  - **Maintenance Mode** — HTTP 503 with `Retry-After` header; search engines retry later
-  - **Coming Soon** — HTTP 200; search engines index normally
+  - **Maintenance Mode** — HTTP 503 with `Retry-After` header; search engines keep existing pages and retry later
+  - **Coming Soon** — HTTP 200; the placeholder loads as a normal page
+- **Not indexable while gated** — in both modes Bouncer serves a strict `robots.txt` (`Disallow: /`), sends `X-Robots-Tag: noindex, nofollow` on every response, and adds a `noindex` meta tag. When Bouncer is off it leaves `robots.txt` and SEO entirely to WordPress / your SEO plugin.
 - Logged-in users always see the live site
 - **IP allowlist** — specific IPs always bypass the bouncer
 - **Named preview links** — create one link per person or team so you know exactly who has access
@@ -28,9 +29,9 @@ A WordPress plugin for maintenance mode and coming soon pages, with IP/token byp
 ### Status
 | Option | Description |
 |---|---|
-| Enable Bouncer | Toggle the plugin on/off |
-| Mode | Maintenance (503) or Coming Soon (200) |
-| Retry After | Seconds for search engines to retry — maintenance mode only |
+| Enable Bouncer | Gate the front end. While on, only logged-in users, Allowed IPs, and preview-link holders reach the live site; a strict `robots.txt` + `noindex` headers are served |
+| Mode | Maintenance (503, for an existing indexed site that's temporarily down) or Coming Soon (200, for a site not launched yet). Neither is indexable while gated |
+| Retry After | `Retry-After` value on the 503 — hint for how long engines should wait before rechecking; maintenance mode only |
 
 ### Access Control
 | Option | Description |
@@ -58,7 +59,7 @@ A WordPress plugin for maintenance mode and coming soon pages, with IP/token byp
 | Secondary Text | Toggle to show a second text block below the main text — useful for bilingual sites, simplified summaries, or any additional copy |
 | Main Text | Body copy shown to all visitors |
 | Secondary Text | Shown below the main text when enabled |
-| Contact Email | Linked in the page copy; leave blank to omit |
+| Contact Email | Linked in the page copy; obfuscated in the HTML source to deter spam harvesters; leave blank to omit |
 
 ### Display
 | Option | Description |

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.6]
+
+### Fixed
+
+- A gated site could still be indexed: on `template_redirect` Bouncer swallowed WordPress's `do_robots()`, so `/robots.txt` returned the HTML placeholder (indexable, HTTP 200 in Coming Soon mode) and the site had no valid robots.txt. Bouncer now serves a real `robots.txt` (`User-agent: * / Disallow: /`, `text/plain`) while the gate is on.
+
+### Added
+
+- Every gated response now carries an `X-Robots-Tag: noindex, nofollow` header (both modes), and the Bouncer page includes a `<meta name="robots" content="noindex, nofollow">` tag.
+
+### Changed
+
+- Expanded the inline help text on the settings page (Enable, Mode, Retry After, Allowed IPs, Heading, Main Text, Contact Email, Display options).
+- When Bouncer is disabled it does not touch `is_robots()` or send any headers — `robots.txt` and SEO are left entirely to WordPress / the site's SEO plugin.
+
+## [2.5.5]
+
+### Changed
+
+- Contact email on the Bouncer page is now obfuscated in the HTML source (reversed + base64 in a data attribute, rehydrated to a `mailto:` link by an inline script) so address-harvesting spam bots can't scrape it. No-JS visitors get a readable `user [at] host` fallback.
+
 ## [2.5.4]
 
 ### Added
